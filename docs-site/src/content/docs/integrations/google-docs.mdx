@@ -32,7 +32,13 @@ with the `gdocs` extra:
 uv tool install 'claude-code-tools[gdocs]'
 ```
 
-## First-Time Setup
+## First-Time Google OAuth Setup
+
+:::note
+This setup is shared by all Google tools
+(`md2gdoc`, `gdoc2md`, `csv2gsheet`, `gsheet2csv`).
+You only need to do it once per GCP project.
+:::
 
 <Steps>
 
@@ -42,16 +48,37 @@ uv tool install 'claude-code-tools[gdocs]'
 2. Create or select a project and enable the
    **Google Drive API** and the **Google Docs API**
 
-3. Go to **APIs & Services** > **Credentials** >
+3. Set up the **OAuth consent screen**:
+
+   - Go to **APIs & Services** > **OAuth consent
+     screen**
+   - If prompted for user type, choose **Internal**
+     (available for Google Workspace accounts) --
+     this avoids needing Google verification
+   - Fill in the required fields (app name, support
+     email) and save
+   - If your app is set to **External**, go to the
+     **Audience** tab in the left sidebar and either
+     click **Publish app** to make it available, or
+     add your email under **Test users**
+
+   :::caution
+   If you skip this step, the OAuth flow will show an
+   error saying the app is "blocked" or "being
+   evaluated". Publishing the app (or switching to
+   Internal) resolves this.
+   :::
+
+4. Go to **APIs & Services** > **Credentials** >
    **Create Credentials** > **OAuth client ID**
 
-4. Choose **Desktop app**, then download the JSON
+5. Choose **Desktop app**, then download the JSON
    file
 
-5. Save it as `.gdoc-credentials.json` in your
+6. Save it as `.gdoc-credentials.json` in your
    project directory
 
-6. First run will open a browser for OAuth consent
+7. First run will open a browser for OAuth consent
    (one-time per project)
 
 </Steps>
@@ -95,6 +122,34 @@ If a file with the same name already exists,
 md2gdoc report.md --on-existing overwrite
 ```
 
+### Formatting
+
+By default, Google's markdown converter picks the
+font, size, and spacing. Use these flags to override
+body text formatting after upload:
+
+```bash
+# 10pt Arial, double-spaced
+md2gdoc report.md --font Arial --font-size 10 --line-spacing 2.0
+
+# Just change the font
+md2gdoc report.md --font "Times New Roman"
+
+# 1.5x spacing, keep default font
+md2gdoc report.md --line-spacing 1.5
+```
+
+- `--font` -- font family (e.g. `Arial`,
+  `"Times New Roman"`)
+- `--font-size` -- size in points (e.g. `10`, `12`)
+- `--line-spacing` -- multiplier (`1.0` = single,
+  `1.5`, `2.0` = double)
+
+All flags are optional and can be combined. Heading
+styles (H1, H2, etc.) and inline formatting (bold,
+italic, etc.) are preserved -- only body text
+paragraphs get the font/size override.
+
 ### Features
 
 - Native markdown conversion (same quality as manual
@@ -103,6 +158,9 @@ md2gdoc report.md --on-existing overwrite
   markdown (e.g. `![alt](diagram.png)`) are uploaded
   to Drive at full resolution, then inserted into
   the Google Doc with proper sizing
+- **Formatting** -- optional `--font`, `--font-size`,
+  and `--line-spacing` flags to control body text
+  appearance (see above)
 - `--max-image-width` controls display width in
   inches (default: 6.5 = full page width)
 - `--no-images` skips image processing entirely

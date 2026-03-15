@@ -89,21 +89,28 @@ cclocal 8124         # connect to localhost:8124
 cclocal 8124 --resume abc123  # with extra args
 ```
 
-:::danger[Disable Telemetry]
-Add this to `~/.claude/settings.json`:
+:::danger[Required Settings for Local Models]
+Add these to `~/.claude/settings.json`:
 
 ```json
 {
   "env": {
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
   }
 }
 ```
 
-Without this, Claude Code sends telemetry requests to
-your local server, which returns 404s and retries
-aggressively -- causing ephemeral port exhaustion on
-macOS and system-wide network failures.
+- **Attribution header** (`CLAUDE_CODE_ATTRIBUTION_HEADER`):
+  Claude Code prepends an attribution header that
+  changes on every request, invalidating the KV cache
+  and forcing full prompt re-processing each time.
+  Disabling it is critical for usable performance.
+- **Telemetry** (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`):
+  Without this, Claude Code sends telemetry requests
+  to your local server, which returns 404s and retries
+  aggressively -- causing ephemeral port exhaustion on
+  macOS and system-wide network failures.
 :::
 
 </TabItem>
@@ -261,6 +268,7 @@ llama-server \
   --cache-type-v q8_0 \
   --swa-full \
   --no-context-shift \
+  --chat-template-kwargs '{"enable_thinking": false}' \
   --mlock \
   --no-mmap
 ```
@@ -269,6 +277,7 @@ llama-server \
 
 | Setting | Why |
 |---------|-----|
+| `--chat-template-kwargs ...` | Disables thinking mode -- avoids wasted tokens on reasoning, recommended for agentic workflows |
 | `--swa-full` | Expands SWA cache to full context, enabling prompt caching (uses more RAM) |
 | `--no-context-shift` | Required -- context shift is incompatible with SWA |
 | `--cache-type-k/v q8_0` | "Basically free" quality-wise, boosts throughput |
@@ -277,9 +286,8 @@ llama-server \
 
 **Performance (M1 Max 64 GB):**
 
-- Cold start: ~93 seconds (processing ~35k token system prompt)
-- Cached follow-ups: ~10 seconds
-- Prompt eval: ~245--375 tok/s
+- Cached follow-ups: ~3 seconds
+- Prompt eval: ~374--408 tok/s
 - Generation: ~12 tok/s
 
 | Quant | Size | Notes |
