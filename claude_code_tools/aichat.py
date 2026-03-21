@@ -72,15 +72,29 @@ def main(ctx, claude_home, codex_home):
         CLAUDE_CONFIG_DIR  - Default Claude home (overridden by --claude-home)
         CODEX_HOME         - Default Codex home (overridden by --codex-home)
     """
-    # Store home dirs in context for subcommands to access
+    # Store home dirs in context for subcommands to access.
+    # Scan sys.argv for --claude-home/--codex-home that may appear
+    # after the subcommand name (invisible to the group-level option).
+    import sys
     ctx.ensure_object(dict)
-    ctx.obj['claude_home'] = claude_home
-    ctx.obj['codex_home'] = codex_home
+    effective_claude_home = claude_home
+    if not effective_claude_home:
+        for i, arg in enumerate(sys.argv):
+            if arg == '--claude-home' and i + 1 < len(sys.argv):
+                effective_claude_home = sys.argv[i + 1]
+                break
+    effective_codex_home = codex_home
+    if not effective_codex_home:
+        for i, arg in enumerate(sys.argv):
+            if arg == '--codex-home' and i + 1 < len(sys.argv):
+                effective_codex_home = sys.argv[i + 1]
+                break
+    ctx.obj['claude_home'] = effective_claude_home
+    ctx.obj['codex_home'] = effective_codex_home
 
     # Auto-index sessions on every aichat command (incremental, fast if up-to-date)
     # Skip for build-index/clear-index to avoid double-indexing or state conflicts
     # In JSON mode (-j/--json), suppress all output for clean parsing
-    import sys
     skip_auto_index_cmds = ['build-index', 'clear-index', 'index-stats']
     should_skip = any(cmd in sys.argv for cmd in skip_auto_index_cmds)
     json_mode = any(arg in sys.argv for arg in ['-j', '--json'])
@@ -88,10 +102,13 @@ def main(ctx, claude_home, codex_home):
         try:
             from claude_code_tools.search_index import auto_index
             from claude_code_tools.session_utils import get_claude_home, get_codex_home
-            # Respect CLI args, then env vars, then defaults
             auto_index(
-                claude_home=get_claude_home(cli_arg=claude_home),
-                codex_home=get_codex_home(cli_arg=codex_home),
+                claude_home=get_claude_home(
+                    cli_arg=effective_claude_home,
+                ),
+                codex_home=get_codex_home(
+                    cli_arg=effective_codex_home,
+                ),
                 verbose=False,
                 silent=json_mode,
             )
@@ -185,6 +202,7 @@ def _find_and_run_session_ui(
                 find_session_file,
                 default_export_path,
                 detect_agent_from_path,
+                get_session_uuid,
             )
 
             # Find session file
@@ -205,7 +223,7 @@ def _find_and_run_session_ui(
             session_dict = {
                 "agent": agent,
                 "agent_display": "Claude" if agent == "claude" else "Codex",
-                "session_id": session_file.stem,
+                "session_id": get_session_uuid(session_file.stem),
                 "mod_time": session_file.stat().st_mtime,
                 "create_time": session_file.stat().st_ctime,
                 "lines": 0,  # Not needed for direct action
@@ -670,7 +688,9 @@ def smart_trim(session, instructions, exclude_types, preserve_recent, content_th
     import sys
     from pathlib import Path
 
-    from claude_code_tools.session_utils import find_session_file, detect_agent_from_path
+    from claude_code_tools.session_utils import (
+        find_session_file, detect_agent_from_path, get_session_uuid,
+    )
 
     # If --instructions provided, use the handler function (same as TUI)
     if instructions and session:
@@ -678,7 +698,7 @@ def smart_trim(session, instructions, exclude_types, preserve_recent, content_th
         if input_path.exists() and input_path.is_file():
             session_file = input_path
             detected_agent = detect_agent_from_path(session_file)
-            session_id = session_file.stem
+            session_id = get_session_uuid(session_file.stem)
             project_path = str(session_file.parent)
         else:
             result = find_session_file(session)
@@ -686,7 +706,7 @@ def smart_trim(session, instructions, exclude_types, preserve_recent, content_th
                 print(f"Error: Session not found: {session}", file=sys.stderr)
                 sys.exit(1)
             detected_agent, session_file, project_path, _ = result
-            session_id = session_file.stem
+            session_id = get_session_uuid(session_file.stem)
 
         # Use the handler function which supports custom_instructions
         if detected_agent == "claude":
@@ -918,6 +938,7 @@ def info(session, agent, json_output):
         extract_cwd_from_session,
         count_user_messages,
         default_export_path,
+        get_session_uuid,
     )
     from claude_code_tools.session_lineage import get_continuation_lineage
 
@@ -946,7 +967,7 @@ def info(session, agent, json_output):
         return
 
     # Gather session info
-    session_id = session_file.stem
+    session_id = get_session_uuid(session_file.stem)
     mod_time = datetime.fromtimestamp(session_file.stat().st_mtime)
     create_time = datetime.fromtimestamp(session_file.stat().st_ctime)
     file_size = session_file.stat().st_size
@@ -1087,6 +1108,7 @@ def move_session(session, new_project, agent):
         find_session_file,
         detect_agent_from_path,
         get_claude_home,
+        get_session_uuid,
     )
 
     # Resolve new project path
@@ -1184,7 +1206,7 @@ def move_session(session, new_project, agent):
         print(f"\n[green]Session updated successfully![/green]")
         print(f"  From: {old_cwd}")
         print(f"  To:   {new_project_path}")
-        session_id = session_file.stem
+        session_id = get_session_uuid(session_file.stem)
         agent_cmd = "codex"
         resume_cmd = f"cd {new_project_path} && codex resume {session_id}"
 
@@ -1229,7 +1251,9 @@ def query_session(session, question, agent):
     import sys
     from pathlib import Path
 
-    from claude_code_tools.session_utils import find_session_file, detect_agent_from_path
+    from claude_code_tools.session_utils import (
+        find_session_file, detect_agent_from_path, get_session_uuid,
+    )
 
     if not session:
         _find_and_run_session_ui(
@@ -1261,7 +1285,7 @@ def query_session(session, question, agent):
 
         rpc_path = str(Path(__file__).parent / "action_rpc.py")
         session_data = {
-            "session_id": session_file.stem,
+            "session_id": get_session_uuid(session_file.stem),
             "agent": detected_agent,
             "file_path": str(session_file),
             "cwd": str(session_file.parent),
@@ -1318,7 +1342,9 @@ def clone_session_cmd(session, agent):
     import sys
     from pathlib import Path
 
-    from claude_code_tools.session_utils import find_session_file, detect_agent_from_path
+    from claude_code_tools.session_utils import (
+        find_session_file, detect_agent_from_path, get_session_uuid,
+    )
 
     if not session:
         _find_and_run_session_ui(
@@ -1344,7 +1370,7 @@ def clone_session_cmd(session, agent):
         if agent:
             detected_agent = agent
 
-    session_id = session_file.stem
+    session_id = get_session_uuid(session_file.stem)
 
     # Execute clone
     if detected_agent == "claude":
@@ -1458,7 +1484,9 @@ def lineage(session, agent, json_output):
     from pathlib import Path
     from datetime import datetime
 
-    from claude_code_tools.session_utils import find_session_file, detect_agent_from_path
+    from claude_code_tools.session_utils import (
+        find_session_file, detect_agent_from_path, get_session_uuid,
+    )
     from claude_code_tools.session_lineage import get_full_lineage_chain
 
     if not session:
@@ -1495,7 +1523,7 @@ def lineage(session, agent, json_output):
     for path, derivation_type in lineage_chain:
         mod_time = datetime.fromtimestamp(path.stat().st_mtime)
         lineage_data.append({
-            "session_id": path.stem,
+            "session_id": get_session_uuid(path.stem),
             "file_path": str(path),
             "derivation_type": derivation_type,
             "modified": mod_time.isoformat(),
