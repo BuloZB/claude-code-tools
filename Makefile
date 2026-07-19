@@ -1,4 +1,8 @@
-.PHONY: install release patch minor major dev-install help clean all-patch all-minor all-major release-github lmsh lmsh-install lmsh-publish aichat-search aichat-search-install aichat-search-release aichat-search-patch aichat-search-minor aichat-search-major aichat-search-publish fix-session-metadata fix-session-metadata-apply delete-helper-sessions delete-helper-sessions-apply prep-node update-homebrew docs-dev docs-build docs-preview
+.PHONY: install release patch minor major dev-install help clean publish all-patch all-minor all-major release-github lmsh lmsh-install lmsh-publish aichat-search aichat-search-install aichat-search-release aichat-search-patch aichat-search-minor aichat-search-major aichat-search-publish fix-session-metadata fix-session-metadata-apply delete-helper-sessions delete-helper-sessions-apply update-homebrew docs-dev docs-build docs-preview
+
+GIT_PRIMARY_WORKTREE := $(realpath $(shell git rev-parse \
+	--path-format=absolute --git-common-dir)/..)
+PYPI_ENV_FILE ?= $(GIT_PRIMARY_WORKTREE)/.env
 
 help:
 	@echo "Available commands:"
@@ -11,6 +15,7 @@ help:
 	@echo "  make all-patch    - Bump patch, push, GitHub release, build (ready for uv publish)"
 	@echo "  make all-minor    - Bump minor, push, GitHub release, build (ready for uv publish)"
 	@echo "  make all-major    - Bump major, push, GitHub release, build (ready for uv publish)"
+	@echo "  make publish      - Publish dist/ using the primary checkout's .env"
 	@echo "  make clean        - Clean build artifacts"
 	@echo "  make release-github - Create GitHub release from latest tag"
 	@echo "  make lmsh         - Build lmsh binary (requires Rust)"
@@ -27,7 +32,6 @@ help:
 	@echo "  make fix-session-metadata-apply - Actually fix sessionId mismatches"
 	@echo "  make delete-helper-sessions       - Find helper sessions to delete (dry-run)"
 	@echo "  make delete-helper-sessions-apply - Actually delete helper sessions"
-	@echo "  make prep-node    - Install node_modules (required before publishing)"
 
 install:
 	uv tool install --force -e .
@@ -78,7 +82,23 @@ clean:
 	rm -rf dist/*
 	@echo "Clean complete!"
 
-all-patch: prep-node
+publish:
+	@if ! ls dist/*.whl dist/*.tar.gz >/dev/null 2>&1; then \
+		echo "Error: dist/ must contain both wheel and source distributions" >&2; \
+		exit 1; \
+	fi
+	@if [ ! -f "$(PYPI_ENV_FILE)" ]; then \
+		echo "Error: PyPI environment file not found: $(PYPI_ENV_FILE)" >&2; \
+		exit 1; \
+	fi
+	@uv run --no-sync --env-file "$(PYPI_ENV_FILE)" -- sh -eu -c '\
+		if [ -z "$${PYPI_TOKEN:-}" ]; then \
+			echo "Error: PYPI_TOKEN is not defined in $(PYPI_ENV_FILE)" >&2; \
+			exit 1; \
+		fi; \
+		UV_PUBLISH_TOKEN="$$PYPI_TOKEN" uv publish'
+
+all-patch:
 	@echo "Ensuring dev dependencies (commitizen)..."
 	@uv sync --extra dev --quiet
 	@echo "Bumping patch version..."
@@ -92,9 +112,9 @@ all-patch: prep-node
 	rm -rf dist/*
 	@echo "Building package..."
 	uv build
-	@echo "Build complete! Ready for: uv publish --token YOUR_TOKEN"
+	@echo "Build complete! Ready for: make publish"
 
-all-minor: prep-node
+all-minor:
 	@echo "Ensuring dev dependencies (commitizen)..."
 	@uv sync --extra dev --quiet
 	@echo "Bumping minor version..."
@@ -108,9 +128,9 @@ all-minor: prep-node
 	rm -rf dist/*
 	@echo "Building package..."
 	uv build
-	@echo "Build complete! Ready for: uv publish --token YOUR_TOKEN"
+	@echo "Build complete! Ready for: make publish"
 
-all-major: prep-node
+all-major:
 	@echo "Ensuring dev dependencies (commitizen)..."
 	@uv sync --extra dev --quiet
 	@echo "Bumping major version..."
@@ -124,7 +144,7 @@ all-major: prep-node
 	rm -rf dist/*
 	@echo "Building package..."
 	uv build
-	@echo "Build complete! Ready for: uv publish --token YOUR_TOKEN"
+	@echo "Build complete! Ready for: make publish"
 
 release-github:
 	@echo "Creating GitHub release..."
@@ -229,15 +249,6 @@ delete-helper-sessions:
 delete-helper-sessions-apply:
 	@echo "Deleting helper sessions..."
 	@python3 scripts/delete_helper_sessions.py -v
-
-prep-node:
-	@echo "Installing Node.js dependencies for packaging..."
-	@if ! command -v npm >/dev/null 2>&1; then \
-		echo "Error: Node.js/npm not found. Install Node.js first."; \
-		exit 1; \
-	fi
-	@cd node_ui && npm install
-	@echo "node_ui/node_modules ready for packaging."
 
 update-homebrew:
 	@if [ -z "$(VERSION)" ]; then \

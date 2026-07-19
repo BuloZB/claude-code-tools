@@ -1,14 +1,16 @@
 <div align="center">
 
 <a href="https://pchalasani.github.io/claude-code-tools/">
-<img src="assets/logo-nyc-subway.png" alt="CLAUDE CODE TOOLS"
+<img src="assets/title-blade-runner-theme.png" alt="CLAUDE CODE TOOLS"
      width="500"/>
 </a>
 
 CLI tools, skills, agents, hooks, and plugins for enhancing productivity with Claude Code and other coding agents.
 
 [![Documentation](https://img.shields.io/badge/%F0%9F%93%96-documentation-blue)](https://pchalasani.github.io/claude-code-tools/)
-[![aichat-search](https://img.shields.io/github/v/release/pchalasani/claude-code-tools?filter=rust-v*&label=aichat-search&color=orange)](https://github.com/pchalasani/claude-code-tools/releases?q=rust)
+[![claude-code-tools on PyPI](https://img.shields.io/pypi/v/claude-code-tools?label=claude-code-tools&color=blue)](https://pypi.org/project/claude-code-tools/)
+[![claude-code-tools installs/week](https://img.shields.io/pypi/dw/claude-code-tools?label=installs&color=2563eb)](https://pypistats.org/packages/claude-code-tools)
+[![aichat-search](https://img.shields.io/crates/v/aichat-search?label=aichat-search&color=orange)](https://crates.io/crates/aichat-search)
 [![Mentioned in Awesome Codex CLI](https://awesome.re/mentioned-badge.svg)](https://github.com/RoggeOhta/awesome-codex-cli)
 
 </div>
@@ -38,13 +40,80 @@ separate Rust binary:
   [Releases](https://github.com/pchalasani/claude-code-tools/releases)
   (look for `rust-v*`)
 
-Install the Claude Code
-[plugins](https://pchalasani.github.io/claude-code-tools/getting-started/plugins/)
-for hooks, skills, and agents:
+Install the Claude Code workflow plugin:
 
 ```bash
 claude plugin marketplace add pchalasani/claude-code-tools
+claude plugin install workflow@cctools-plugins
 ```
+
+Install the equivalent dynamic workflow plugin for Codex:
+
+```bash
+codex plugin marketplace add pchalasani/claude-code-tools
+codex plugin add dynamic-workflow@cctools-codex-plugins
+```
+
+The Codex plugin installs independently: it does not require the Python
+`claude-code-tools` package or an npm install. Node.js 20 or newer and Codex
+CLI 0.136.0 or newer are required for callbacks. Version 0.136.0 is the first
+compatible CLI release for this callback protocol. Codex still marks the app
+server and remote TUI interfaces as experimental, so those surfaces may evolve.
+The plugin can notify the originating Codex thread through Codex's shared app
+server after a detached workflow finishes. Callback preflight also rejects a
+stale connected server.
+
+The optional Python package makes that callback setup a single command:
+
+```bash
+codex-dynamic
+# Or continue the latest conversation:
+codex-dynamic resume --last
+```
+
+`codex-dynamic` starts or reuses the local app server and then hands the
+terminal directly to Codex. After a plugin or Codex upgrade, the next launch
+automatically starts a fresh server generation; existing sessions and workflow
+callbacks stay connected to their old generation. No manual restart is needed.
+Use `codex-server status` or `logs` for nondisruptive inspection. A forced stop
+or restart cleans up every retained generation and disconnects its attached
+TUIs, so use those commands only after exiting the sessions normally.
+
+The Python package also installs `codex-workflows`, an observational dashboard
+for durable workflow runs:
+
+```bash
+codex-workflows
+codex-workflows watch --limit 20
+codex-workflows show RUN_ID
+codex-workflows --all
+```
+
+The default list contains only active workflows and identifies the project
+folder from which each workflow was launched. Use `show RUN_ID` for its full
+working directory, or `--all` to include completed and diagnostic history. The
+command reads durable workflow state and process metadata. It never changes a
+run, sends a signal, repairs state, or launches an agent. See the
+[codex-workflows reference][codex-workflows-reference] for filters, JSON output,
+and the complete versioned schema.
+
+[codex-workflows-reference]:
+  //pchalasani.github.io/claude-code-tools/tools/codex-dynamic/#observe-workflow-runs
+
+Server management and passive supervision add no model calls. Completion
+reporting starts a new turn only while the thread is idle; otherwise it steers
+and extends the active turn. Either reporting path consumes model tokens.
+
+Each workflow `run` or `resume` uses narrow host execution for that exact
+reviewed supervisor command. The workflow JavaScript remains restricted, and
+every headless Codex worker keeps its declared sandbox.
+
+See the
+[Claude → Codex migration guide][claude-to-codex-guide]
+for usage and workflow-porting instructions.
+
+[claude-to-codex-guide]:
+  https://pchalasani.github.io/claude-code-tools/guides/claude-to-codex/
 
 ---
 
@@ -81,12 +150,17 @@ Click a card to jump to that feature, or
 </a>
 </td>
 <td align="center">
-<a href="https://pchalasani.github.io/claude-code-tools/tools/lmsh/">
-<img src="assets/card-lmsh.svg" alt="lmsh" width="200"/>
+<a href="https://pchalasani.github.io/claude-code-tools/tools/agent-tunnel/">
+<img src="assets/card-agent-tunnel.svg" alt="agent-tunnel" width="200"/>
 </a>
 </td>
 </tr>
 <tr>
+<td align="center">
+<a href="https://pchalasani.github.io/claude-code-tools/tools/lmsh/">
+<img src="assets/card-lmsh.svg" alt="lmsh" width="200"/>
+</a>
+</td>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/tools/vault/">
 <img src="assets/card-vault.svg" alt="vault" width="200"/>
@@ -97,13 +171,13 @@ Click a card to jump to that feature, or
 <img src="assets/card-env-safe.svg" alt="env-safe" width="200"/>
 </a>
 </td>
+</tr>
+<tr>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/plugins-detail/safety-hooks/">
 <img src="assets/card-safety.svg" alt="safety" width="200"/>
 </a>
 </td>
-</tr>
-<tr>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/tools/statusline/">
 <img src="assets/card-statusline.svg" alt="statusline" width="200"/>
@@ -114,13 +188,13 @@ Click a card to jump to that feature, or
 <img src="assets/card-gdocs.svg" alt="gdocs" width="200"/>
 </a>
 </td>
+</tr>
+<tr>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/integrations/google-sheets/">
 <img src="assets/card-gsheets.svg" alt="gsheets" width="200"/>
 </a>
 </td>
-</tr>
-<tr>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/integrations/alt-llm-providers/">
 <img src="assets/card-alt.svg" alt="alt" width="200"/>
@@ -131,9 +205,21 @@ Click a card to jump to that feature, or
 <img src="assets/card-voice.svg" alt="voice" width="200"/>
 </a>
 </td>
+</tr>
+<tr>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/tools/fix-session/">
 <img src="assets/card-session-repair.svg" alt="session repair" width="200"/>
+</a>
+</td>
+<td align="center">
+<a href="https://pchalasani.github.io/claude-code-tools/tools/sasy-guard/">
+<img src="assets/card-sasy-guard.svg" alt="sasy-guard" width="200"/>
+</a>
+</td>
+<td align="center">
+<a href="https://pchalasani.github.io/claude-code-tools/guides/claude-to-codex/">
+<img src="assets/card-claude-to-codex.svg" alt="Claude to Codex" width="200"/>
 </a>
 </td>
 </tr>

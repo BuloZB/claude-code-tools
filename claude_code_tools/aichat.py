@@ -30,6 +30,26 @@ class SessionIDGroup(click.Group):
         return super().parse_args(ctx, args)
 
 
+class ResolveCommand(click.Command):
+    """Click command that renders resolver usage errors without usage text."""
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        """Parse arguments, converting Click usage failures to resolver errors."""
+        import sys
+
+        from claude_code_tools.resolve_session import _render_error
+
+        raw_args = tuple(args)
+        try:
+            return super().parse_args(ctx, args)
+        except click.UsageError as error:
+            pretty = "--pretty" in raw_args or (
+                "--json" not in raw_args and sys.stdout.isatty()
+            )
+            _render_error("invalid_input", error.format_message(), pretty)
+            ctx.exit(1)
+
+
 @click.group(cls=SessionIDGroup, invoke_without_command=True)
 @click.version_option()
 @click.option(
@@ -96,7 +116,11 @@ def main(ctx, claude_home, codex_home):
     # Skip for build-index/clear-index to avoid double-indexing or state conflicts
     # In JSON mode (-j/--json), suppress all output for clean parsing
     skip_auto_index_cmds = ['build-index', 'clear-index', 'index-stats']
-    should_skip = any(cmd in sys.argv for cmd in skip_auto_index_cmds)
+    should_skip = (
+        ctx.invoked_subcommand == 'resolve'
+        or ctx.invoked_subcommand in skip_auto_index_cmds
+        or any(cmd in sys.argv for cmd in skip_auto_index_cmds)
+    )
     json_mode = any(arg in sys.argv for arg in ['-j', '--json'])
     if not should_skip:
         try:
@@ -126,6 +150,54 @@ def main(ctx, claude_home, codex_home):
             select_target='action',
             results_title=' Select a session ',
         )
+
+
+@main.command("resolve", cls=ResolveCommand)
+@click.argument("query")
+@click.option(
+    "--agent",
+    type=str,
+    metavar="claude|codex",
+    default="claude",
+    show_default=True,
+)
+@click.option(
+    "--home",
+    type=click.Path(readable=False),
+    help="Claude or Codex home directory to search.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Force JSON output.")
+@click.option(
+    "--pretty",
+    "pretty_output",
+    is_flag=True,
+    help="Force human-readable output.",
+)
+@click.pass_context
+def resolve_session_cmd(
+    ctx: click.Context,
+    query: str,
+    agent: str,
+    home: str | None,
+    json_output: bool,
+    pretty_output: bool,
+) -> None:
+    """Resolve a name, full session ID, or partial session ID."""
+    import sys
+
+    from claude_code_tools.resolve_session import run
+
+    if json_output and pretty_output:
+        click.echo(
+            '{"error":"invalid_format",'
+            '"detail":"Choose only one of --json or --pretty."}'
+        )
+        sys.exit(1)
+    if home is None:
+        home_key = "codex_home" if agent.casefold() == "codex" else "claude_home"
+        home = ctx.ensure_object(dict).get(home_key)
+    fmt = "json" if json_output else "pretty" if pretty_output else "auto"
+    sys.exit(run(query, agent.lower(), home, fmt))
 
 
 # Shared help text for find commands
@@ -641,6 +713,145 @@ def trim(session, tools, threshold, trim_assistant, output_dir, agent, claude_ho
         select_target='trim_menu',
         results_title=' Which session to trim? ',
     )
+
+
+class _JsonContractCommand(click.Command):
+    """Command whose ``--json`` flag guarantees single-line JSON output.
+
+    Click option/argument parsing failures (bad ``--len``, non-integer
+    ``--trim-assistant``, missing argument, ...) normally print usage
+    text and exit 2 BEFORE the command body runs. Scripts (e.g. the
+    aichat plugin's ``>trim`` hook) depend on ``--json`` emitting
+    exactly one JSON line - the result or ``{"error": msg}`` with exit
+    code 1 - so when ``--json`` is among the raw args, parse errors are
+    converted to that contract instead of Click usage text.
+    """
+
+    def parse_args(self, ctx, args):
+        raw_args = list(args)
+        try:
+            return super().parse_args(ctx, args)
+        except click.UsageError as e:
+            if "--json" in raw_args:
+                import json as json_mod
+
+                click.echo(json_mod.dumps({"error": e.format_message()}))
+                ctx.exit(1)
+            raise
+
+
+@main.command("trim-in-place", cls=_JsonContractCommand)
+@click.argument("session", required=True)
+@click.option("--tools", "-t",
+              help="Comma-separated tools to trim (e.g., 'bash,read,edit'). "
+                   "Default: all tools.")
+@click.option("--len", "-l", "threshold", type=click.IntRange(min=1),
+              default=500,
+              help="Minimum length threshold in chars for trimming (default: 500)")
+@click.option("--trim-assistant", "-a", "trim_assistant", type=int,
+              help="Trim assistant messages: positive N trims first N over threshold, "
+                   "negative N trims all except last |N| over threshold")
+@click.option("--dry-run", "-n", is_flag=True,
+              help="Compute savings without modifying the session file")
+@click.option("--json", "json_output", is_flag=True,
+              help="Print a single-line JSON result (for scripts/hooks)")
+@click.option("--claude-home", help="Path to Claude home directory")
+def trim_in_place_cmd(session, tools, threshold, trim_assistant, dry_run,
+                      json_output, claude_home):
+    """Trim a session file IN PLACE (keeps the same session ID).
+
+    Unlike `aichat trim` (which creates a new trimmed session file), this
+    rewrites the original file so the session keeps its identity: the next
+    time the same session is resumed it loads the trimmed transcript. A
+    timestamped backup (<id>.pre-trim-<ts>.jsonl.bak) is saved next to the
+    session file; truncation placeholders reference it.
+
+    This powers the `>trim` in-session trigger of the aichat plugin, and
+    can also be used directly on any Claude session.
+
+    \b
+    Examples:
+        aichat trim-in-place abc123 --dry-run     # Preview tokens saved
+        aichat trim-in-place abc123               # Trim with defaults
+        aichat trim-in-place abc123 -a -20        # Keep last 20 long asst msgs
+        aichat trim-in-place abc123 -t bash -l 1000
+    """
+    import json as json_mod
+    import sys
+    from pathlib import Path
+
+    from claude_code_tools.session_utils import resolve_session_path
+    from claude_code_tools.trim_in_place import trim_session_in_place
+
+    def emit_error(msg: str) -> None:
+        if json_output:
+            print(json_mod.dumps({"error": msg}))
+        else:
+            print(f"Error: {msg}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        session_file = resolve_session_path(session, claude_home)
+    except SystemExit:
+        # resolve_session_path() exits directly (SystemExit is NOT an
+        # Exception) for ambiguous partial ids, after listing the
+        # matches on stderr. Under --json, convert that to the
+        # contractual single {"error": ...} stdout line.
+        if not json_output:
+            raise
+        emit_error(
+            f"Multiple sessions match '{session}'. "
+            f"Use a more specific session ID."
+        )
+    except Exception as e:
+        # SESSION comes from the CLI/hook and may be hostile (e.g. a
+        # path long enough to raise ENAMETOOLONG): keep the --json
+        # single-line contract for any resolution failure.
+        emit_error(str(e) or type(e).__name__)
+
+    target_tools = None
+    if tools:
+        target_tools = {
+            t.strip().lower() for t in tools.split(",") if t.strip()
+        }
+
+    try:
+        result = trim_session_in_place(
+            Path(session_file),
+            target_tools=target_tools,
+            threshold=threshold,
+            trim_assistant_messages=trim_assistant,
+            dry_run=dry_run,
+        )
+    except Exception as e:
+        # Session files are hostile input: ANY unexpected exception
+        # must become the contractual single JSON error line under
+        # --json (never a traceback).
+        emit_error(str(e) or type(e).__name__)
+
+    if json_output:
+        print(json_mod.dumps(result))
+        return
+
+    verb = "Would save" if dry_run or not result["applied"] else "Saved"
+    print(f"Session: {result['session_file']}")
+    print(
+        f"{verb} ~{result['tokens_saved']:,} tokens "
+        f"({result['chars_saved']:,} chars); "
+        f"{result['num_tools_trimmed']} tool results and "
+        f"{result['num_assistant_trimmed']} assistant messages trimmed"
+    )
+    if result["nothing_to_trim"]:
+        print("Savings too small - session left unchanged.")
+    elif result["applied"]:
+        print(f"Backup: {result['backup_file']}")
+        print(
+            f"File size: {result['size_before']:,} -> "
+            f"{result['size_after']:,} bytes"
+        )
+        print(
+            "Savings take effect the next time this session is resumed."
+        )
 
 
 @main.command("smart-trim")

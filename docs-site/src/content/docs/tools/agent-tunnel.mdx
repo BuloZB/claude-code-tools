@@ -1,0 +1,432 @@
+---
+title: "agent-tunnel — Share Your Expert Sessions"
+description: >
+  Publish any local Claude Code session with >share and let teammates ask it
+  questions over Discord, answered against safe read-only forks.
+---
+
+import { Steps, Aside } from "@astrojs/starlight/components";
+
+A local Claude Code session accumulates large, valuable context over time —
+effectively a custom expert agent. `agent-tunnel` lets you **publish a
+specific session** with `>share`, hand the resulting **handle** to teammates,
+and have them ask it questions over Discord — each answered against a private,
+read-only **fork** of that session.
+
+In short, it lets colleagues talk to a Claude Code session running on your Mac
+— answered either by an interactive session driven through tmux or a headless
+`claude -p` run (details below).
+
+<Aside type="note" title="You need two installs">
+
+1. **The package** (CLI + daemon) — the usual way:
+   `uv tool install claude-code-tools` (or `uvx` / `pipx`). This gives you the
+   `agent-tunnel serve / ask / published / watch / doctor / …` commands.
+2. **The plugin** (the `>share` publish hook) —
+   `claude plugin install agent-tunnel@cctools-plugins`, then restart Claude
+   Code.
+
+Both are required: the package runs the daemon, the plugin lets you `>share` a
+session from inside Claude Code. Full setup is below.
+
+</Aside>
+
+## How it works
+
+- Inside any session, you type `>share`. A hook reads *that* session's own id
+  and folder and mints a short **handle** (e.g. `pay-7Q2`). A folder can hold
+  many sessions, so the handle is pinned to the exact session you ran it in —
+  not the folder.
+- You give the handle to colleagues. In the Discord channel, a message that
+  **starts with the handle** opens a thread bound to that session; follow-ups
+  stay in the thread.
+- Each thread is answered against `--resume <session> --fork-session`: the
+  fork copies the context, your original session is untouched, and remote
+  turns are **hard-restricted to read-only tools** (`Read`/`Grep`/`Glob`).
+- The Discord Gateway is an *outbound* websocket — **no tunnel, no open port,
+  no cloud**. Everything runs on your Mac.
+- The fork knows it's in **bot mode**: its persona says it's answering
+  teammates relayed over chat, and each incoming message is prefixed with who
+  sent it and how — e.g. `Alice (via Discord) says: …` — so it can address
+  people by name. The platform label is the `[tunnel] platform` config value
+  (defaults to `Discord`), ready for other chat front-ends.
+
+```text
+   inside any session:  >share  ─►  hook writes registry  { handle → session }
+                                                  │
+   colleague's Discord  ─►  Discord  ◄─ ws ─  agent-tunnel serve  ─►  fork that
+        (handle → thread)                       (reads registry)       session
+```
+
+## For your colleagues (the simple part)
+
+Nothing to install. You hand them a handle; they:
+
+<Steps>
+
+1. Not sure what's shared? Post **`!list`** (or `!handles`) in the channel to
+   see every available handle.
+
+2. Post `<handle> <question>` — e.g. `pay-7Q2 how does token refresh work?`
+
+3. The bot opens a **thread** (named `<handle>: <question>`) and answers there.
+   They keep asking **in that thread** — no handle needed again.
+
+4. When done, they type **`!done`** (or `!close` / `!end`) in the thread to
+   close it.
+
+</Steps>
+
+So the whole colleague vocabulary is just three things: **`!list`** to
+discover, **`<handle> <question>`** to ask, **`!done`** to close. They can also
+**attach a file** to a question (a PDF, CSV, image…) and the agent will read
+it; on write-enabled handles the agent can hand a generated file back into the
+thread. Inside a thread the bot answers every message — *except* one that
+starts with **@someone-else** (a teammate, role, or `@everyone`), so you can
+side-chat with a human without the bot chiming in.
+
+## The `agent-tunnel` command group
+
+Installing the package adds a single console command, **`agent-tunnel`** — a
+command group (like `aichat`) whose subcommands are:
+
+| Subcommand | What it does |
+| --- | --- |
+| `agent-tunnel serve` | Run the Discord daemon — the long-lived bridge that answers questions |
+| `agent-tunnel published` | List the sessions you've shared (handles in the registry) |
+| `agent-tunnel status` | Show active conversation threads and their forks |
+| `agent-tunnel forks [<handle>]` | Table of fork sessions (handle, access, asker, last active, turns, live/idle, fork id); `--json` to script, `--manage` to select-and-clear |
+| `agent-tunnel resume <handle>` | Resume a colleague-accumulated fork in Claude Code (most recent, or `--fork <id>`) |
+| `agent-tunnel rename <old> <new>` | Rename a shared handle (registry + bound forks + live tmux windows) |
+| `agent-tunnel watch` | Attach to the private tmux server to watch live forks |
+| `agent-tunnel doctor` | Readiness check (token found, channel set, `claude`/`tmux` on PATH) |
+| `agent-tunnel ask "Q" --handle H` | Ask one question through the full pipeline, no Discord (local test) |
+| `agent-tunnel forget --thread T \| --all` | Drop thread bindings and kill their tmux windows |
+| `agent-tunnel init` | Write a commented sample config |
+| `agent-tunnel help` | Extensive help — overview, where-to-run, and every command's details |
+
+The one piece that is **not** a subcommand is **`>share`** (and `!list` /
+`!done`): `>share` runs *inside* a Claude session as a hook, and `!list` /
+`!done` are typed by colleagues in Discord.
+
+## Where to run each command
+
+Most commands are plain CLI; only two care about tmux:
+
+| Command | Where to run it |
+| --- | --- |
+| `agent-tunnel serve` | Anywhere it stays alive — a tmux pane is handy. It drives its **own** private tmux server, so it never touches your main one. |
+| `agent-tunnel watch` | Best from a **plain terminal tab (outside tmux)** to avoid nesting. It works inside tmux too (it warns you), just with awkward prefix keys. |
+| `>share` | **Inside** the Claude session you want to publish — it's a hook from the plugin, not a subcommand. |
+| `agent-tunnel resume` | A **normal terminal** where you want the Claude session — it `exec`s `claude --resume`, dropping you into the fork. |
+| `ask` · `published` · `status` · `forks` · `doctor` · `forget` · `init` | Anywhere — tmux context is irrelevant. |
+
+`agent-tunnel help` prints all of this plus every command's details.
+
+## Publishing & closing
+
+Type these as a prompt **inside the session you want to expose** (the prompt
+is intercepted — it never reaches the model; you just see the handle):
+
+| Command | Effect |
+| --- | --- |
+| `>share` | Publish this session; mint/show a handle |
+| `>share <label>` | Publish under a friendly handle, e.g. `>share payments` |
+| `>share --write <label>` | Publish with **write access** (file edits); read-only otherwise |
+| `>share --dangerously-allow-bash <label>` | Write **plus shell commands** (for real PDFs/docx) — trusted people only |
+| `>share --dangerously-skip-permissions <label>` | **Full access**: any tool/MCP (web, browser, shell) with no prompts — needs `[claude] allow_skip_permissions`; fully-trusted only |
+| `>share --read <label>` | Downgrade a handle back to read-only |
+| `>share status` | Show this session's handle, if any |
+| `>share off` | Stop sharing (revoke the handle) |
+
+Access is **per handle** and escalates **read ⊂ write ⊂ bash ⊂ all**: read-only
+by default, `--write` adds file edits (but still **never** `Bash`),
+`--dangerously-allow-bash` additionally allows shell commands, and
+`--dangerously-skip-permissions` (the **all** level) drops every restriction so
+the fork can use any tool or MCP server (web, the browser, shell) with no
+prompts. The **all** level is gated: it does nothing unless the owner also sets
+`[claude] allow_skip_permissions = true` (double opt-in), or the daemon refuses
+the turn. Re-sharing without a flag keeps the current level. `agent-tunnel
+published` tags writable handles with ✍️, bash with 💥, and full with 🚨.
+
+Re-sharing **with** a level flag changes a **live** thread's access on its next
+message (same fork, full context kept), not just new threads: the daemon
+re-reads the handle's access each turn. So `>share --write payments` upgrades an
+in-flight read-only conversation, and `>share --read payments` pulls it back,
+with no need to close the thread (`!done`) and reopen it. Upgrading to **all**
+still honors the gate: without `allow_skip_permissions` the next turn is refused
+rather than silently granted.
+
+A labeled handle also makes the Discord thread and the tmux window readable
+(`payments-…` instead of a cryptic id). Colleagues end a conversation with
+`!done` in their thread; that tears the fork down immediately.
+
+## Sharing files both ways (attachments)
+
+A thread can move files in both directions — hand the expert a document, get a
+generated deliverable back.
+
+**Inbound — a colleague attaches a file (any handle).** Drop a PDF, image,
+CSV, or markdown file onto a message (with or without text) and the agent reads
+it: the bot saves it to a contained per-thread folder and points the fork's
+`Read` tool at it. Works for every handle, since reading is always allowed.
+Per-file size and count caps apply (`limits.max_attachment_mb` /
+`max_attachments`); anything over is skipped with a note.
+
+**Office files** (`.docx` / `.pptx` / `.xlsx`) can't be opened by `Read`
+directly, so they're **best-effort auto-converted** — to PDF if LibreOffice is
+on the host (highest fidelity), otherwise to Markdown (pandoc) or text. It's
+purely opportunistic: nothing needs installing, and if no converter is present
+the bot just asks the colleague to send a PDF. Toggle with `[attachments]
+convert = "auto" | "off"`. **PDF is the universal "attach this and it works"
+format** — it needs no converter and `Read` renders its pages visually.
+
+**Outbound — the agent hands a file back (write/bash handles).** A
+write-or-bash fork is told to drop anything it wants to deliver into an
+**outbox** inside the project — `.agent-tunnel-out/` — and the bot posts
+whatever appears there back into the thread as attachments. That folder carries
+a `.gitignore` of `*`, so deliverables never show up in your `git status`.
+
+<Aside type="note">
+Without shell access a fork can only deliver what it can write directly —
+Markdown, CSV, text, code, HTML. To get a real **PDF or .docx** (e.g. built
+with pandoc), publish the handle with `>share --dangerously-allow-bash`, which
+also lets that fork run shell commands. Read-only handles produce nothing
+outbound (they can't write).
+</Aside>
+
+## Multiple Claude config dirs (e.g. work vs personal)
+
+If you run separate `CLAUDE_CONFIG_DIR`s — say `~/.claude` for personal and
+`~/.claude-rja` for work — agent-tunnel handles it **automatically**: `>share`
+detects which config dir the session lives under (from its transcript path),
+and the daemon forks each session under *that* config dir. So a work session
+forks with your work config and account, a personal one with your personal —
+nothing to configure, even though the daemon itself runs under one of them.
+`agent-tunnel published` tags each handle with its config dir
+(`[.claude-rja]` vs `[.claude]`) so you can tell them apart at a glance.
+
+<Aside type="note">
+**First-time folders:** before forking, the tmux backend pre-trusts the shared
+folder in the right config dir, so you don't hit Claude's "Do you trust this
+folder?" dialog (which would otherwise block the fork). Disable with
+`[claude] auto_trust = false`.
+</Aside>
+
+## Setup — for developers / self-hosters
+
+### Part A: create the Discord bot (one-time)
+
+<Steps>
+
+1. At the [developer portal](https://discord.com/developers/applications) →
+   **New Application**.
+
+2. Left sidebar → **Bot**. Set its display name. **Reset Token** → **Copy**
+   (treat it like a password).
+
+3. Toggle **MESSAGE CONTENT INTENT** on — mandatory, or the bot sees blank
+   messages.
+
+4. **OAuth2** → **URL Generator** → scope `bot`; permissions: View Channels,
+   Send Messages, Create Public Threads, Send Messages in Threads, Attach
+   Files, Add Reactions, Read Message History. Copy the URL.
+
+5. Open the URL → pick a server where you have **Manage Server** (your own, or
+   ask a company admin) → **Authorize**. The bot appears (offline until you
+   run `serve`).
+
+6. Make a dedicated (ideally private) channel; on a private channel, add the
+   bot to it. User Settings → Advanced → **Developer Mode**, then right-click
+   the channel → **Copy Channel ID**.
+
+</Steps>
+
+<Aside type="tip" title="On a company / shared server (the admin dance)">
+
+Steps 5–6 assume you can add a bot and make channels. On a server you don't
+own you usually **lack the "Manage Server" permission**, so only steps 1–4
+(building the bot + token) are yours — the rest needs a Discord admin:
+
+- **Send the admin the OAuth invite URL** from step 4. Only someone with
+  *Manage Server* can add the bot: they open the link → pick the server →
+  **Authorize**. (You'll find the server isn't even in your own "Add to
+  Server" dropdown without that permission.)
+- **Ask the admin to create a dedicated (private) channel and add the bot to
+  it** — a private channel is invisible to the bot until it's explicitly
+  added.
+- Then grab that channel's ID (**Developer Mode** → right-click → **Copy
+  Channel ID**) for your config.
+
+The bot only ever acts in the channel ID(s) you configure, so it stays silent
+in every other channel regardless of what it can technically see.
+
+</Aside>
+
+### Part B: install the plugin + configure
+
+<Steps>
+
+1. Install the plugin that provides `>share` (from this repo's marketplace):
+
+   ```bash
+   claude plugin marketplace add pchalasani/claude-code-tools
+   claude plugin install agent-tunnel@cctools-plugins
+   ```
+
+   Restart Claude Code, then `>share` works in any session.
+
+2. Write the config and add your token + channel:
+
+   ```bash
+   agent-tunnel init      # ~/.config/agent-tunnel/config.toml
+   ```
+
+   ```toml
+   [tunnel]
+   backend = "headless"    # default; or "tmux" to watch forks live
+
+   [discord]
+   # No need to export anything: point at a file holding the token.
+   token_file = "~/Documents/tokens/discord-token.txt"
+   channel_ids = [123456789012345678]
+
+   # Optional — Office attachments (.docx/.pptx/.xlsx) are auto-converted to a
+   # readable format when a converter (LibreOffice/pandoc) is on PATH:
+   # [attachments]
+   # convert = "auto"      # or "off"
+   ```
+
+3. Check readiness:
+
+   ```bash
+   agent-tunnel doctor
+   ```
+
+</Steps>
+
+### Part C: run it
+
+```bash
+agent-tunnel serve
+```
+
+Keep it alive (a dedicated tmux pane is convenient). With `token_file` set you
+don't export anything. Your Mac must be awake and online; discord.py
+auto-reconnects after sleep.
+
+## Watching live (tmux mode only)
+
+This applies only when you run with `--backend tmux`. In **headless** mode
+(the default) there are no windows to watch — use the `agent-tunnel forks`
+table and the daemon's per-question log lines for visibility instead.
+
+The `tmux` backend runs each fork as a real `claude` in a window on a
+**dedicated, private tmux server** (`tmux -L agent-tunnel`) — isolated from
+your main tmux (its own file-descriptor budget, out of your normal
+`tmux ls`). Watch colleague Q&A happen live:
+
+```bash
+agent-tunnel watch     # run from a plain terminal tab
+```
+
+Each thread is a window named after its handle. Detach with your tmux prefix
+then `d`.
+
+## Cleanup model
+
+- Colleagues close their own threads with **`!done`** (immediate teardown).
+- A **backstop reaper** kills forks idle longer than `pane_idle_ttl_min`
+  (default **3h** — only catches abandoned threads; set `0` to disable).
+- You can also `agent-tunnel forget --all`, `tmux -L agent-tunnel
+  kill-server`, or just Ctrl-C `serve`.
+
+## Resuming a fork (pick up colleague context)
+
+A fork keeps its JSONL transcript after the tmux window is reaped — so the
+**extra context your colleagues built up lives on**, and you can continue it
+yourself. The catch: a fork copies the *original* session's name, so multiple
+forks show the **same name** in Claude's `/resume` picker and you can't tell
+them apart. `forks` and `resume` sidestep that entirely by using the exact
+fork id the daemon recorded:
+
+```bash
+agent-tunnel forks          # all forks: handle, asker, last active, turns, id
+agent-tunnel forks cmmc     # filter to one handle
+agent-tunnel resume cmmc    # resume cmmc's fork in Claude Code
+```
+
+A handle can have **several forks** (each colleague's thread is its own). When
+there's more than one, `resume` picks the **most recently active** and lists
+the rest so you can choose:
+
+```
+handle 'cmmc' has 3 forks (resuming the most recent, ←):
+  ← alice   2h ago   14 turns   fork c75f3a83
+    bob     1d ago    6 turns   fork 9e21ab04
+    you     3d ago    2 turns   fork 1f0b40e6
+  pick another:  agent-tunnel resume cmmc --fork 9e21ab04
+```
+
+The **turn count** is your "how much context" signal. `resume` runs
+`claude --resume <fork-id>` in that fork's project dir and config dir (work vs
+personal), so you land in the right session — no `/resume` name ambiguity.
+
+<Aside type="caution">
+Prefer resuming forks that are **idle/reaped**. If you resume a fork whose
+tmux window is still live and a colleague asks in that thread at the same
+moment, both sessions write to the same transcript (interleaving). Once the
+window is reaped, it's completely safe.
+</Aside>
+
+## Server modes (`headless` vs `tmux`)
+
+Choose how the daemon answers with `--backend` or `[tunnel] backend` in the
+config. **The default is `headless`.**
+
+- **`headless`** — a `claude -p` subprocess per question, with clean JSON
+  in/out. More reliable (no terminal scraping or submit-timing heuristics) and
+  needs no tmux. **Launch:** `agent-tunnel serve`.
+- **`tmux`** — a real interactive `claude` per thread, each in a window of a
+  private tmux server you can **watch live** with `agent-tunnel watch`.
+  **Launch:** `agent-tunnel serve --backend tmux`.
+
+Both run on your logged-in `claude` (no API key needed). Do **not** put
+`--bare` in `[claude] headless_extra_args` — it skips your user config and
+breaks subscription auth. Each **new** thread replays the published session's
+full context (~its token count per cold question), which is fine for Q&A.
+
+The daemon logs **one line per question** — `Q [thread] handle ← asker: "…"` on
+arrival and `A [thread] handle: … in Ns, N chars, fork …` on completion (plus
+errors) — so tailing the `serve` output is a live activity feed and a
+who-asked-what trail. That's the primary way to watch a **headless** daemon
+(which has no `agent-tunnel watch`); pair it with the `agent-tunnel forks`
+table.
+
+## Security notes
+
+<Aside type="caution">
+**Access equals Discord channel membership** plus knowing a live handle. Use a
+private channel and/or `allowed_user_ids` / `allowed_role_ids`, and `>share
+off` when done.
+</Aside>
+
+<Aside type="caution">
+**They can read what that session can read.** Read-only tools are hard-enforced
+by the CLI permission layer — no writes, edits, or commands — but a determined
+asker can surface anything in the session context or readable project tree.
+Only `>share` sessions whose context you're willing to expose. If you grant
+**write access** (`>share --write`), a colleague's message — or a prompt
+injection in your channel — can also *edit files* in that folder (it still
+never runs shell commands). `>share --dangerously-allow-bash` goes further and
+lets the fork **run shell commands** — that removes the sandbox entirely, so
+use it only for folders and people you fully trust.
+</Aside>
+
+<Aside type="note">
+**It runs on your machine, billed to your subscription.** Consumer plans
+prohibit making your *account* available to others; an owner-operated relay
+where colleagues only submit questions is a gray area. For unambiguous footing
+or higher volume, use `headless` + an `ANTHROPIC_API_KEY`. Keep the bot token
+private (it's only referenced by path/env); if it leaks, **Reset Token**.
+</Aside>

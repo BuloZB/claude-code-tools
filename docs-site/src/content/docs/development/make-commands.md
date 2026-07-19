@@ -41,14 +41,18 @@ a GitHub release, and build the package.
 | `make all-patch` | Bump patch + push + GitHub release + build |
 | `make all-minor` | Bump minor + push + GitHub release + build |
 | `make all-major` | Bump major + push + GitHub release + build |
+| `make publish` | Publish `dist/` using the primary checkout's `.env` |
 | `make release-github` | Create GitHub release from latest tag |
 | `make clean` | Clean `dist/` build artifacts |
 
 After running any `all-*` command, publish with:
 
 ```bash
-uv publish
+make publish
 ```
+
+Linked worktrees automatically use the primary checkout's `.env`. Set
+`PYPI_ENV_FILE=/path/to/file` to load the token from another dotenv file.
 
 ## Rust Binaries
 
@@ -81,12 +85,6 @@ Default bump type is `patch`.
 | `make lmsh` | Build the lmsh binary |
 | `make lmsh-install` | Build and install to `~/.cargo/bin` |
 | `make lmsh-publish` | Bump version and publish to crates.io |
-
-## Node.js
-
-| Command | Description |
-|---------|-------------|
-| `make prep-node` | Install `node_modules` (auto-runs before publish) |
 
 ## Documentation
 

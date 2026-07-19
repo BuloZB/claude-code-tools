@@ -1,8 +1,7 @@
 ---
 title: "Plugins"
 description: >-
-  Claude Code plugin installation and details
-  for hooks, skills, agents, and safety guards.
+  Plugin installation and details for Codex and Claude Code.
 ---
 
 import { Steps, Badge } from "@astrojs/starlight/components";
@@ -14,7 +13,7 @@ import { Steps, Badge } from "@astrojs/starlight/components";
   }
 `}</style>
 
-This repo provides plugins for the
+This repo provides plugins for Codex and for the
 [Claude Code marketplace](https://code.claude.com/docs/en/discover-plugins).
 
 ## Plugin Overview
@@ -27,8 +26,38 @@ This repo provides plugins for the
 | `safety-hooks` | Prevent destructive operations |
 | `langroid` | Design patterns for the [Langroid](https://github.com/langroid/langroid) framework |
 | `voice` | Spoken audio summaries |
+| `agent-tunnel` | `>share` a live session so teammates can ask it questions over Discord |
+| `dynamic-workflow` | Durable JavaScript orchestration for headless Codex agents |
 
-## Installation
+## Codex Plugin Installation
+
+Install the dynamic workflow plugin from the Codex marketplace in this repo:
+
+```bash
+codex plugin marketplace add pchalasani/claude-code-tools
+codex plugin add dynamic-workflow@cctools-codex-plugins
+```
+
+The plugin itself does not require `uv tool install claude-code-tools` or an
+`npm install`. It includes the skill and compiled runner; Node.js 20 or newer
+only needs to be available to execute the runner. For completion callbacks,
+the optional [`codex-dynamic` helper][codex-dynamic] starts Codex through its
+shared app server with one command. The manual setup remains available, and
+neither path requires MCP. Codex still marks the underlying app-server and
+remote TUI interfaces as experimental, so their CLI and protocol surfaces may
+evolve.
+
+If a `codex-dynamic` app server is already running during an install or update,
+start Codex normally afterward. The helper automatically selects a fresh
+server generation while existing TUIs and callbacks remain connected to their
+original generation.
+
+See the
+[Dynamic Workflow detail page](/claude-code-tools/plugins-detail/dynamic-workflow/)
+for its JavaScript API, state model, and safety boundaries.
+
+[codex-dynamic]: /claude-code-tools/tools/codex-dynamic/
+## Claude Code Plugin Installation
 
 <Steps>
 
@@ -57,6 +86,7 @@ This repo provides plugins for the
    claude plugin install "safety-hooks@cctools-plugins"
    claude plugin install "langroid@cctools-plugins"
    claude plugin install "voice@cctools-plugins"
+   claude plugin install "agent-tunnel@cctools-plugins"
    ```
 
    Or use `/plugin` without arguments inside a
@@ -76,6 +106,7 @@ an agent for session management and search.
 |------|------|--------------|
 | Hook | `>resume` | Type `>resume` (or `>continue`, `>handoff`) to copy session ID and show resume instructions |
 | Hook | `>session` | Type `>session` (or `>session-id`) to copy the session ID to clipboard |
+| Hook | `>trim` | Preview an in-place trim of the current session, then `>trim yes` to apply / `>trim help` for options (savings kick in on the next resume) |
 | Skill | `/session-search` | Search past sessions (for agents without sub-agent support, e.g. Codex) |
 | Skill | `/recover-context` | Extract context from parent sessions into the current conversation |
 | Agent | `session-searcher` | Sub-agent to search and retrieve context from past sessions |
@@ -174,3 +205,20 @@ See the
 for prerequisites, configuration, architecture
 details, and recommended speech-to-text
 companions.
+
+---
+
+## agent-tunnel Plugin
+
+Publishes the **current** Claude Code session so teammates can ask it
+questions over Discord — each answered against a private, read-only **fork**.
+
+| Type | Name | What it does |
+|------|------|--------------|
+| Hook | `>share` | Publish this session and mint a handle to hand to colleagues (`>share <label>`, `>share --write`, `>share --dangerously-allow-bash`, `>share status`, `>share off`) |
+
+This plugin provides only the `>share` hook. The daemon that answers the
+questions — `agent-tunnel serve` and the rest of the CLI — ships with the
+`claude-code-tools` package (`uv tool install claude-code-tools`). See the
+[agent-tunnel tool page](/claude-code-tools/tools/agent-tunnel/) for the full
+setup: creating the Discord bot, configuration, and running the daemon.

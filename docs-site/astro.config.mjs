@@ -49,6 +49,10 @@ export default defineConfig({
                   slug: "tools/aichat/search",
                 },
                 {
+                  label: "Resolve",
+                  slug: "tools/aichat/resolve",
+                },
+                {
                   label: "Session Actions",
                   slug: "tools/aichat/actions",
                 },
@@ -85,6 +89,22 @@ export default defineConfig({
             { label: "Status Line", slug: "tools/statusline" },
             { label: "vault", slug: "tools/vault" },
             { label: "env-safe", slug: "tools/env-safe" },
+            { label: "sasy-guard", slug: "tools/sasy-guard" },
+            { label: "agent-tunnel", slug: "tools/agent-tunnel" },
+            {
+              label: "codex-dynamic",
+              collapsed: false,
+              items: [
+                {
+                  label: "Overview",
+                  slug: "tools/codex-dynamic",
+                },
+                {
+                  label: "codex-workflows",
+                  link: "/tools/codex-dynamic/#monitor-workflows-with-codex-workflows",
+                },
+              ],
+            },
           ],
         },
         {
@@ -98,6 +118,10 @@ export default defineConfig({
             {
               label: "Workflow",
               slug: "plugins-detail/workflow",
+            },
+            {
+              label: "Dynamic Workflow",
+              slug: "plugins-detail/dynamic-workflow",
             },
             {
               label: "Langroid",
@@ -129,6 +153,10 @@ export default defineConfig({
         {
           label: "Guides",
           items: [
+            {
+              label: "Claude → Codex",
+              slug: "guides/claude-to-codex",
+            },
             {
               label: "Zsh Setup",
               slug: "guides/zsh-setup",
