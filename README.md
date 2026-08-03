@@ -15,42 +15,10 @@ CLI tools, skills, agents, hooks, and plugins for enhancing productivity with Cl
 
 </div>
 
-## [Full Documentation](https://pchalasani.github.io/claude-code-tools/)
+## [Full Documentation →](https://pchalasani.github.io/claude-code-tools/)
 
-## Install
-
-```bash
-# Core package
-uv tool install claude-code-tools
-
-# With Google Docs/Sheets extras
-uv tool install "claude-code-tools[gdocs]"
-
-# Upgrade an existing installation
-uv tool install --force claude-code-tools
-```
-
-The search engine (`aichat search`) requires a
-separate Rust binary:
-
-- **Homebrew** (macOS/Linux):
-  `brew install pchalasani/tap/aichat-search`
-- **Cargo**: `cargo install aichat-search`
-- **Pre-built binary**:
-  [Releases](https://github.com/pchalasani/claude-code-tools/releases)
-  (look for `rust-v*`)
-
-Install the Claude Code
-[plugins](https://pchalasani.github.io/claude-code-tools/getting-started/plugins/)
-for hooks, skills, and agents:
-
-```bash
-claude plugin marketplace add pchalasani/claude-code-tools
-```
-
----
-
-Click a card to jump to that feature, or
+Everything — installation, every tool, plugins, and guides — lives in the
+docs. Click a card below to jump to a feature, or
 **[read the full docs](https://pchalasani.github.io/claude-code-tools/)**.
 
 <div align="center">
@@ -78,17 +46,22 @@ Click a card to jump to that feature, or
 </a>
 </td>
 <td align="center">
+<a href="https://pchalasani.github.io/claude-code-tools/tools/voxtype/">
+<img src="assets/card-voxtype.svg" alt="voxtype" width="200"/>
+</a>
+</td>
+<td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/tools/tmux-cli/">
 <img src="assets/card-tmux.svg" alt="tmux-cli" width="200"/>
 </a>
 </td>
+</tr>
+<tr>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/tools/agent-tunnel/">
 <img src="assets/card-agent-tunnel.svg" alt="agent-tunnel" width="200"/>
 </a>
 </td>
-</tr>
-<tr>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/tools/lmsh/">
 <img src="assets/card-lmsh.svg" alt="lmsh" width="200"/>
@@ -99,13 +72,13 @@ Click a card to jump to that feature, or
 <img src="assets/card-vault.svg" alt="vault" width="200"/>
 </a>
 </td>
+</tr>
+<tr>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/tools/env-safe/">
 <img src="assets/card-env-safe.svg" alt="env-safe" width="200"/>
 </a>
 </td>
-</tr>
-<tr>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/plugins-detail/safety-hooks/">
 <img src="assets/card-safety.svg" alt="safety" width="200"/>
@@ -116,13 +89,13 @@ Click a card to jump to that feature, or
 <img src="assets/card-statusline.svg" alt="statusline" width="200"/>
 </a>
 </td>
+</tr>
+<tr>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/integrations/google-docs/">
 <img src="assets/card-gdocs.svg" alt="gdocs" width="200"/>
 </a>
 </td>
-</tr>
-<tr>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/integrations/google-sheets/">
 <img src="assets/card-gsheets.svg" alt="gsheets" width="200"/>
@@ -133,13 +106,13 @@ Click a card to jump to that feature, or
 <img src="assets/card-alt.svg" alt="alt" width="200"/>
 </a>
 </td>
+</tr>
+<tr>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/plugins-detail/voice/">
 <img src="assets/card-voice.svg" alt="voice" width="200"/>
 </a>
 </td>
-</tr>
-<tr>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/tools/fix-session/">
 <img src="assets/card-session-repair.svg" alt="session repair" width="200"/>
@@ -150,6 +123,8 @@ Click a card to jump to that feature, or
 <img src="assets/card-sasy-guard.svg" alt="sasy-guard" width="200"/>
 </a>
 </td>
+</tr>
+<tr>
 <td align="center">
 <a href="https://pchalasani.github.io/claude-code-tools/guides/claude-to-codex/">
 <img src="assets/card-claude-to-codex.svg" alt="Claude to Codex" width="200"/>
@@ -174,27 +149,3 @@ Click a card to jump to that feature, or
 </table>
 
 </div>
-
----
-
-> **Legacy links** — The sections below exist to
-> preserve links shared in earlier discussions.
-> For current documentation, visit the
-> [full docs site](https://pchalasani.github.io/claude-code-tools/).
-
-<a id="aichat-session-management"></a>
-## aichat — Session Management
-See [aichat](https://pchalasani.github.io/claude-code-tools/tools/aichat/) in the full documentation.
-
-<a id="tmux-cli-terminal-automation"></a>
-## tmux-cli — Terminal Automation
-See [tmux-cli](https://pchalasani.github.io/claude-code-tools/tools/tmux-cli/) in the full documentation.
-
-<a id="voice"></a>
-## Voice Plugin
-See [Voice](https://pchalasani.github.io/claude-code-tools/plugins-detail/voice/) in the full documentation.
-
-<a id="license"></a>
-## License
-
-MIT
