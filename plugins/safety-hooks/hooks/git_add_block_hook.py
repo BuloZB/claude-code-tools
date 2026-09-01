@@ -2,7 +2,6 @@
 import os
 import re
 import shlex
-import subprocess
 import sys
 from pathlib import Path
 
@@ -76,10 +75,6 @@ _ENV_VALUE_OPTS: set[str] = {'-u', '--unset', '-C', '--chdir', '-P'}
 _ENV_SHORT_VALUE_OPTS = frozenset('uCPS')
 _UNRESOLVABLE_CHDIR_CHARS = frozenset('$`*?[')
 _REPOSITORY_ROUTING_VARS = {'GIT_DIR', 'GIT_WORK_TREE'}
-_UNVERIFIED_STAGING_REASON = (
-    'Could not safely resolve the target repository or inspect its status. '
-    'Approval is required before staging files.'
-)
 _ADD_ALL_LONG_OPTIONS = {'--a', '--al', '--all'}
 
 
@@ -275,6 +270,18 @@ def _is_repository_routing_assignment(token: str) -> bool:
     return token.partition('=')[0] in _REPOSITORY_ROUTING_VARS
 
 
+def _routing_assignment_work_tree(token: str) -> str | None:
+    """Return the work tree an assignment names, unresolved.
+
+    `GIT_WORK_TREE` names the tree Git stages from. `GIT_DIR` only relocates
+    the repository metadata, leaving the work tree where it is, so it returns
+    None. The value stays unresolved because a later `git -C` moves the
+    directory a relative value is resolved against.
+    """
+    name, _separator, value = token.partition('=')
+    return value if name == 'GIT_WORK_TREE' and value else None
+
+
 def _resolve_git_add_argv(
     command: str,
 ) -> tuple[list[str], str | None] | None:
@@ -288,10 +295,11 @@ def _resolve_git_add_argv(
         return None
 
     cwd = os.getcwd()
+    work_tree: str | None = None
     i = 0
     while i < len(argv) and _ASSIGNMENT_WORD.match(argv[i]):
         if _is_repository_routing_assignment(argv[i]):
-            cwd = None
+            work_tree = _routing_assignment_work_tree(argv[i]) or work_tree
         i += 1
 
     if i < len(argv) and Path(argv[i]).name == 'env':
@@ -302,14 +310,16 @@ def _resolve_git_add_argv(
             short_value = _env_short_value(token)
             if _ASSIGNMENT_WORD.match(token):
                 if _is_repository_routing_assignment(token):
-                    cwd = None
+                    work_tree = (
+                        _routing_assignment_work_tree(token) or work_tree)
                 i += 1
                 continue
             if token == '--':
                 i += 1
                 while i < len(argv) and _ASSIGNMENT_WORD.match(argv[i]):
                     if _is_repository_routing_assignment(argv[i]):
-                        cwd = None
+                        work_tree = (
+                            _routing_assignment_work_tree(argv[i]) or work_tree)
                     i += 1
                 break
             if name in _ENV_VALUE_OPTS or short_value:
@@ -367,14 +377,18 @@ def _resolve_git_add_argv(
                 value = argv[i]
             if name == '-C' and value:
                 cwd = _resolve_add_chdir(cwd, value)
-            elif name in {'--git-dir', '--work-tree'}:
-                cwd = None
+            elif name == '--work-tree' and value:
+                work_tree = value
             i += 1
             continue
         break
 
     if i >= len(argv) or argv[i] != 'add':
         return None
+    if work_tree is not None:
+        # `git -C` moves the directory a relative work tree resolves against,
+        # so this cannot be done where the value is first seen.
+        cwd = _resolve_add_chdir(cwd, work_tree)
     return ['git', 'add', *argv[i + 1:]], cwd
 
 
@@ -501,16 +515,7 @@ def _commit_avoids_editor(
     return bool(message_sources or fixup_value)
 
 
-def _is_allowed(flag_name: str, session_id: str = "") -> bool:
-    """Check if a session-scoped allow flag is set."""
-    if not session_id:
-        return False
-    return os.path.exists(
-        f'/tmp/claude/allow-git-{flag_name}.{session_id}'
-    )
-
-
-def check_git_add_command(command, session_id: str = ""):
+def check_git_add_command(command):
     """
     Check if a git add command contains dangerous patterns.
     Handles compound commands (e.g., "cd /path && git add .").
@@ -522,7 +527,7 @@ def check_git_add_command(command, session_id: str = ""):
     first_ask_result = None
 
     for subcmd in _split_compound_command(command):
-        result = _check_single_git_add_command(subcmd, session_id)
+        result = _check_single_git_add_command(subcmd)
         decision, reason = result
 
         # Hard blocks return immediately
@@ -540,7 +545,89 @@ def check_git_add_command(command, session_id: str = ""):
     return False, None
 
 
-def _check_single_git_add_command(command, session_id: str = ""):
+# `git add` options that take their value as the following token.
+_ADD_VALUE_OPTS = {'--chmod', '--pathspec-from-file'}
+
+
+def _add_pathspecs(add_arguments: list[str]) -> list[str]:
+    """Return the pathspec operands of a `git add`, dropping its options."""
+    pathspecs: list[str] = []
+    index = 0
+    while index < len(add_arguments):
+        argument = add_arguments[index]
+        if argument == '--':
+            pathspecs.extend(add_arguments[index + 1:])
+            break
+        if argument in _ADD_VALUE_OPTS:
+            index += 2
+            continue
+        if argument.startswith('-'):
+            index += 1
+            continue
+        pathspecs.append(argument)
+        index += 1
+    return pathspecs
+
+
+def _is_root_of_its_base(path: str) -> bool:
+    """Return whether a path selects the whole tree it is resolved against.
+
+    Used for repository-root magic, where the remainder is relative to the
+    repository root: `:/` and `://` both name the root, and `git add ://`
+    stages every file in the repository.
+    """
+    if not path:
+        return True
+    return os.path.normpath(path) in {'.', os.sep}
+
+
+def _selects_repository_root(pathspec: str, cwd: str | None) -> bool:
+    """Return whether a pathspec stages everything `git add .` would stage.
+
+    `git add .` is blocked outright, so its equivalents have to be blocked too:
+    `./`, the repository-root magic `:/` and `:(top)`, and any absolute path
+    that contains the working directory.
+    """
+    if not pathspec:
+        # An empty pathspec matches every path in the repository.
+        return True
+
+    if pathspec.startswith(':'):
+        if pathspec.startswith(':('):
+            end = pathspec.find(')')
+            if end == -1:
+                return False
+            if 'exclude' in pathspec[2:end]:
+                return False
+            return _is_root_of_its_base(pathspec[end + 1:])
+        magic = pathspec[1:]
+        if magic.startswith(('!', '^')):
+            return False
+        if magic.startswith('/'):
+            return _is_root_of_its_base(magic[1:])
+        return magic == ''
+
+    normalized = os.path.normpath(os.path.expanduser(pathspec))
+    if normalized == '.' or normalized == '..':
+        return True
+    if normalized.startswith('..' + os.sep):
+        return True
+    if os.path.isabs(normalized):
+        if cwd is None:
+            # The work tree could not be resolved (a shell expansion, say), so
+            # whether this path contains it is unknowable. Treat it as bulk
+            # staging rather than approving a possible `git add <work-tree>`.
+            return True
+        # realpath, because /var and /private/var name the same directory on
+        # macOS and a plain string compare would miss the equivalence.
+        base = os.path.realpath(cwd)
+        target = os.path.realpath(normalized)
+        return base == target or base.startswith(
+            target.rstrip(os.sep) + os.sep)
+    return False
+
+
+def _check_single_git_add_command(command):
     """
     Check a single (non-compound) command for dangerous git add patterns.
     Returns tuple: (decision, reason) where decision is bool or "ask"/"block"/"allow"
@@ -586,107 +673,34 @@ This restriction prevents accidentally staging unwanted files."""
         argument.split('=', 1)[0] in _ADD_ALL_LONG_OPTIONS
         for argument in add_arguments
     )
-    if dangerous_pattern.search(normalized_cmd) or abbreviated_all:
+    stages_root = any(
+        _selects_repository_root(pathspec, repo_cwd)
+        for pathspec in _add_pathspecs(add_arguments)
+    )
+    if dangerous_pattern.search(normalized_cmd) or abbreviated_all or stages_root:
         reason = """BLOCKED: Dangerous git add pattern detected!
 
 DO NOT use:
 - 'git add -A', 'git add -a', 'git add --all' (adds ALL files)
-- 'git add .' (adds entire current directory)
+- 'git add .' (adds entire current directory), or an equivalent such as
+  'git add ./', 'git add :/', 'git add :(top)', or an absolute path that
+  contains the current directory
 - 'git add ../' or similar parent directory patterns
 - 'git add *' (wildcard patterns)
 
 Instead, use:
 - 'git add <specific-files>' to stage specific files
-- 'git add <specific-directory>/' to stage a specific directory (with confirmation)
+- 'git add <specific-directory>/' to stage a specific directory
 - 'git add -u' to stage all modified/deleted files (but not untracked)
 
 This restriction prevents accidentally staging unwanted files."""
         return True, reason
 
-    if resolved_add is not None and repo_cwd is None:
-        return 'ask', _UNVERIFIED_STAGING_REASON
-
     if any(
         argument.startswith('--pathspec-')
         for argument in add_arguments
     ):
-        if _is_allowed('staging', session_id):
-            return False, None
         return 'ask', 'Staging paths supplied through a pathspec file.'
-
-    # Check for git add with a directory
-    # Match: git add <dirname>/ or git add <path/to/dir>/
-    directory_pattern = re.compile(r'^git\s+add\s+(?!-)[^\s]+/$')
-    match = directory_pattern.search(normalized_cmd)
-
-    if match:
-        # Extract the directory path from the command
-        parts = normalized_cmd.split()
-        dir_path = None
-        for i, part in enumerate(parts):
-            if i > 0 and parts[i-1] == 'add' and part.endswith('/'):
-                dir_path = part.rstrip('/')
-                break
-
-        if dir_path:
-            # Use dry-run to get files that would be staged
-            try:
-                result = subprocess.run(
-                    ['git', 'add', '--dry-run', dir_path + '/'],
-                    capture_output=True, text=True, cwd=repo_cwd
-                )
-                if result.returncode != 0:
-                    return 'ask', _UNVERIFIED_STAGING_REASON
-                # Parse dry-run output: "add 'filename'" lines
-                files = []
-                for line in result.stdout.strip().split('\n'):
-                    if line.startswith('add '):
-                        # Extract filename from "add 'filename'"
-                        fname = line[4:].strip().strip("'")
-                        files.append(fname)
-
-                if not files:
-                    # No files to stage
-                    return False, None
-
-                # Check which files are modified vs new
-                modified_files = []
-                new_files = []
-                for f in files:
-                    status_result = subprocess.run(
-                        ['git', 'status', '--porcelain', f],
-                        capture_output=True, text=True, cwd=repo_cwd
-                    )
-                    if status_result.returncode != 0:
-                        return 'ask', _UNVERIFIED_STAGING_REASON
-                    status = status_result.stdout.strip()
-                    if status:
-                        status_code = status[:2]
-                        if '?' in status_code:
-                            new_files.append(f)
-                        else:
-                            modified_files.append(f)
-
-                # If only new files, allow without permission
-                if not modified_files:
-                    return False, None
-
-                # Modified files present - ask for permission
-                # Check if staging is allowed via flag file
-                if _is_allowed('staging', session_id):
-                    return False, None
-                file_list = ", ".join(modified_files[:5])
-                if len(modified_files) > 5:
-                    file_list += f" (+{len(modified_files) - 5} more)"
-                reason = (
-                    f"Staging directory {dir_path}/ with modified files: {file_list}"
-                )
-                return "ask", reason
-
-            except Exception:
-                # If dry-run fails, fall back to asking permission
-                reason = f"Staging directory {dir_path}/ (couldn't verify file status)"
-                return "ask", reason
 
     # Also check for git commit -a without a message flag (which would open an
     # editor).
@@ -708,68 +722,7 @@ This restriction prevents accidentally staging unwanted files."""
             )
             return True, reason
 
-    # Check if staging modified files (not new/untracked) - requires permission
-    # This check runs after all blocking patterns pass
-    if normalized_cmd.startswith('git add'):
-        modified_files = get_modified_files_being_staged(
-            normalized_cmd, cwd=repo_cwd)
-        if modified_files is None:
-            return 'ask', _UNVERIFIED_STAGING_REASON
-        if modified_files:
-            # Check if staging is allowed via flag file
-            if _is_allowed('staging', session_id):
-                return False, None
-            file_list = ", ".join(modified_files[:5])
-            if len(modified_files) > 5:
-                file_list += f" (+{len(modified_files) - 5} more)"
-            reason = f"Staging modified files: {file_list}"
-            return "ask", reason
-
     return False, None
-
-
-def get_modified_files_being_staged(command, cwd=None):
-    """
-    Extract files from git add command and return those that are modified
-    (not new/untracked). Returns empty list if only staging new files.
-    """
-    try:
-        parts = shlex.split(command)
-    except ValueError:
-        return None
-    if len(parts) < 3 or parts[0] != 'git' or parts[1] != 'add':
-        return []
-
-    # Extract file arguments (skip 'git add' and any flags)
-    files = []
-    for part in parts[2:]:
-        if not part.startswith('-'):
-            files.append(part)
-
-    if not files:
-        return []
-
-    modified_files = []
-    for f in files:
-        try:
-            # Check git status for this file
-            result = subprocess.run(
-                ['git', 'status', '--porcelain', f],
-                capture_output=True, text=True, cwd=cwd or os.getcwd()
-            )
-            if result.returncode != 0:
-                return None
-            status = result.stdout.strip()
-            if status:
-                # Status codes: ?? = untracked, M = modified, A = staged
-                # We want to flag modified files (not untracked)
-                status_code = status[:2]
-                if '?' not in status_code:  # Not untracked = modified/staged
-                    modified_files.append(f)
-        except Exception:
-            return None
-
-    return modified_files
 
 
 # If run as a standalone script
@@ -787,7 +740,6 @@ if __name__ == "__main__":
 
     # Get the command being executed
     command = data.get("tool_input", {}).get("command", "")
-
     should_block, reason = check_git_add_command(command)
 
     if should_block:
